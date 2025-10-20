@@ -49,3 +49,9 @@ jobs:
           name: SCKillFeed-windows-exe
           path: |
             release\*.exe
+
+  codeql:
+    name: CodeQL (called workflow)
+    needs: test
+    uses: ./.github/workflows/codeql.yml
+
