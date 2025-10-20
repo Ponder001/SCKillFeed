@@ -32,3 +32,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1 (optional: -Clea
 ```
 pyinstaller --onefile --name sc-kill-parser sc_kill_feed.py 
 ```
+
+CI (GitHub Actions)
+--------------------
+
+This repository includes a GitHub Actions workflow that runs on push and pull requests to `main`.
+
+- The `test` job runs on `ubuntu-latest` and executes the unit tests with `python -m unittest discover -v`.
+- The `build-windows` job runs on `windows-latest`, installs the build requirements from `requirements-build.txt`, runs the `build.ps1` PowerShell script to produce a Windows single-file executable using PyInstaller, and uploads the resulting `release\*.exe` as a workflow artifact.
+
+You can find the workflow definition at `.github/workflows/ci.yml`.
+
+Downloading build artifacts
+--------------------------
+
+After a successful build the Windows executable will be available as an artifact on the workflow run page in GitHub Actions. Click the run, then open the "Artifacts" section to download `SCKillFeed-windows-exe`.
