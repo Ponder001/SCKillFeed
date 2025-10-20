@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: read
+  actions: read
+  security-events: write
+  packages: read
+
 jobs:
   test:
     name: Run tests (Linux)
