@@ -2,14 +2,13 @@
 """
 Star Citizen Kill Feed Tracker - Launcher
 
-Choose between command-line and GUI versions
+Note: keeping this entrypoint for now in case we want to add functionality to it later
 """
 
 import sys
 import os
 
 def main():
-    # Directly start the GUI application (no CLI option)
     try:
         from sc_kill_feed_gui import main as gui_main
     except Exception as e:
