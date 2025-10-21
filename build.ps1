@@ -29,7 +29,7 @@ if ($SpecFile -ne "") {
         if ($onefile -or (-not $PSBoundParameters.ContainsKey('onefile'))) { 
             $piArgs += "--onefile" 
         }
-        $piArgs += "--console"
+    $piArgs += "--windowed"
         $piArgs += $entry
     }
 }
