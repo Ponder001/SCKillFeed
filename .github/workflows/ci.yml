@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ remove-cli-option ]
   pull_request:
     branches: [ main ]
 
