@@ -22,6 +22,7 @@ exe = EXE(
     a.datas,
     [],
     name='SCKillFeed',
+    icon='assets/sckt-icon.ico',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
