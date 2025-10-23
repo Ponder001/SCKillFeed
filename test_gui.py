@@ -60,6 +60,10 @@ def make_stub_gui(player_name='Player1'):
     g.player_name = player_name
     g.kills_data = []
     g.data_lock = __import__('threading').RLock()  # Add missing data_lock attribute
+    g._ui_update_lock = __import__('threading').Lock()  # Add missing _ui_update_lock attribute
+    g._pending_updates = 0  # Add missing _pending_updates attribute
+    g._update_timer = None  # Add missing _update_timer attribute
+    g._last_update_time = 0  # Add missing _last_update_time attribute
     g.stats = {
         'total_kills': 0,
         'total_deaths': 0,
