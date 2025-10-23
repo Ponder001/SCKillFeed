@@ -1018,10 +1018,21 @@ class StarCitizenKillFeedGUI:
     
     def debounced_update_statistics(self):
         """Debounced statistics update to prevent excessive UI updates with thread safety"""
+        # Defensive: some test instances may bypass __init__, ensure lock and
+        # related state exist so methods can run without requiring __init__.
+        if not hasattr(self, '_ui_update_lock'):
+            self._ui_update_lock = threading.Lock()
+        if not hasattr(self, '_pending_updates'):
+            self._pending_updates = 0
+        if not hasattr(self, '_update_timer'):
+            self._update_timer = None
+        if not hasattr(self, '_last_update_time'):
+            self._last_update_time = 0
+
         with self._ui_update_lock:
             self._pending_updates += 1
             current_time = time.time()
-            
+
             # Cancel previous timer if it exists
             if self._update_timer:
                 try:
@@ -1030,15 +1041,33 @@ class StarCitizenKillFeedGUI:
                 except AttributeError:
                     # For testing scenarios, just ignore the cancel
                     pass
-            
-            # Schedule update after 100ms delay, but ensure we don't update too frequently
+
+            # Compute delay but do not schedule while holding the lock
             delay = max(50, 100 - int((current_time - self._last_update_time) * 1000))
-            self._update_timer = self.safe_after(delay, self._perform_statistics_update)
+
+        # Schedule the callback outside the lock to prevent deadlock when
+        # `after` executes the callback immediately
+        timer = self.safe_after(delay, self._perform_statistics_update)
+
+        # Store the timer id (if any) under the lock
+        try:
+            with self._ui_update_lock:
+                self._update_timer = timer
+        except Exception:
+            # Be defensive in case lock state changes unexpectedly
+            self._update_timer = timer
     
     def _perform_statistics_update(self):
         """Actually perform the statistics update with thread safety"""
+        # Defensive: ensure the UI update lock and pending state exists even if
+        # __init__ was bypassed (tests may create partial instances).
+        if not hasattr(self, '_ui_update_lock'):
+            self._ui_update_lock = threading.Lock()
+        if not hasattr(self, '_pending_updates'):
+            self._pending_updates = 0
+
         with self._ui_update_lock:
-            if self._pending_updates > 0:
+            if getattr(self, '_pending_updates', 0) > 0:
                 self.update_statistics_display()
                 self._pending_updates = 0
                 self._last_update_time = time.time()
