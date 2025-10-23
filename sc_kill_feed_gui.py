@@ -261,7 +261,7 @@ class StarCitizenKillFeedGUI:
         try:
             # Validate file check interval
             try:
-                interval = float(self.config.get('user', 'file_check_interval', '0.1'))
+                interval = float(self.config.get('user', 'file_check_interval', fallback='0.1'))
                 if interval < 0.01 or interval > 1.0:
                     logger.warning(f"Invalid file_check_interval: {interval}, setting to default 0.1")
                     self.config['user']['file_check_interval'] = '0.1'
@@ -275,7 +275,7 @@ class StarCitizenKillFeedGUI:
             
             # Validate max lines per check
             try:
-                max_lines = int(self.config.get('user', 'max_lines_per_check', '100'))
+                max_lines = int(self.config.get('user', 'max_lines_per_check', fallback='100'))
                 if max_lines < 1 or max_lines > 1000:
                     logger.warning(f"Invalid max_lines_per_check: {max_lines}, setting to default 100")
                     self.config['user']['max_lines_per_check'] = '100'
@@ -289,7 +289,7 @@ class StarCitizenKillFeedGUI:
             
             # Validate max statistics entries
             try:
-                max_stats = int(self.config.get('user', 'max_statistics_entries', '1000'))
+                max_stats = int(self.config.get('user', 'max_statistics_entries', fallback='1000'))
                 if max_stats < 100 or max_stats > 10000:
                     logger.warning(f"Invalid max_statistics_entries: {max_stats}, setting to default 1000")
                     self.config['user']['max_statistics_entries'] = '1000'
@@ -1165,4 +1165,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 
