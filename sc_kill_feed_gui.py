@@ -30,6 +30,7 @@ from lib.win32_helpers import (
     set_app_icon,
     apply_native_win32_borderless,
     set_foreground_hwnd,
+    setup_taskbar_click_handler,
 )
 from lib.ui_helpers import (
     setup_styles,
@@ -47,6 +48,7 @@ from lib.validation_helpers import validate_player_name
 from lib.config_helpers import load_config, validate_and_apply_config, save_config
 from lib import export_helpers
 from lib import monitor_helpers
+from lib.overlay_helpers import create_overlay, OVERLAY_THEMES
 
 from constants import (
     KILL_LINE_RE,
@@ -160,9 +162,12 @@ class StarCitizenKillFeedGUI:
             self._borderless_enabled = True
             # Make the visible Toplevel follow the hidden root's map/unmap so
             # minimizing the taskbar button hides the visible window and vice versa.
+            # Also handle window state changes more reliably
             try:
-                self._tk_root.bind("<Unmap>", lambda e: self.root.withdraw())
-                self._tk_root.bind("<Map>", lambda e: self.root.deiconify())
+                self._tk_root.bind("<Unmap>", self._on_root_unmap)
+                self._tk_root.bind("<Map>", self._on_root_map)
+                self._tk_root.bind("<FocusIn>", self._on_root_focus_in)
+                self._tk_root.bind("<FocusOut>", self._on_root_focus_out)
             except Exception:
                 pass
         else:
@@ -236,6 +241,10 @@ class StarCitizenKillFeedGUI:
             "victims": Counter(),
             "killers": Counter(),
         }
+
+        # Overlay instance
+        self.overlay = None
+        self._overlay_update_job = None
 
         # Regex for parsing kill events - compiled once for efficiency
         self.KILL_LINE_RE = KILL_LINE_RE
@@ -317,6 +326,12 @@ class StarCitizenKillFeedGUI:
         except Exception:
             pass
 
+        # Initialize overlay
+        try:
+            self._init_overlay()
+        except Exception:
+            logger.debug("Failed to initialize overlay", exc_info=True)
+
         # Auto-start monitoring if we have a configured player name and a valid log path
         try:
             if (
@@ -354,6 +369,14 @@ class StarCitizenKillFeedGUI:
                     logger.debug("Failed to save gui_scale on close", exc_info=True)
             except Exception:
                 logger.debug("Failed to save gui_scale on close", exc_info=True)
+            
+            # Destroy overlay
+            try:
+                if self.overlay:
+                    self.overlay.destroy()
+                    self.overlay = None
+            except Exception:
+                pass
         finally:
             # Destroy the visible window and the hidden root (if present)
             try:
@@ -592,6 +615,15 @@ class StarCitizenKillFeedGUI:
         except Exception:
             pass
 
+        # Add periodic state synchronization for Windows hidden root setup
+        if sys.platform == "win32" and getattr(self, "_tk_root", None):
+            try:
+                self._schedule_state_sync()
+                # Setup taskbar click handler for more reliable interaction
+                setup_taskbar_click_handler(self._tk_root, self._on_taskbar_click)
+            except Exception:
+                pass
+
         # Main container with padding
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
@@ -760,24 +792,50 @@ class StarCitizenKillFeedGUI:
 
     def _minimize_window(self):
         """Minimize the window and try to ensure it has a taskbar entry on Windows."""
-        # Use the Tkinter iconify which is reliable on native chrome windows.
         try:
-            try:
-                self.root.iconify()
-                return
-            except Exception:
+            if getattr(self, "_tk_root", None):
+                # On Windows with hidden root, minimize the root window
+                # This will trigger the Unmap event and hide the visible window
                 try:
-                    self.root.withdraw()
+                    self._tk_root.iconify()
                     return
                 except Exception:
+                    try:
+                        self._tk_root.withdraw()
+                        return
+                    except Exception:
+                        pass
+            else:
+                # Fallback for non-Windows or when no hidden root
+                try:
+                    self.root.iconify()
                     return
+                except Exception:
+                    try:
+                        self.root.withdraw()
+                        return
+                    except Exception:
+                        return
         except Exception:
             # If anything unexpected happens, ignore to avoid crashing the UI
             return
 
-    def _on_root_map(self, event=None):
-        """Re-enable borderless chrome after the window is restored from minimized state."""
+    def _on_root_unmap(self, event=None):
+        """Handle when the hidden root window is minimized (taskbar icon clicked)."""
         try:
+            # Hide the visible window when the root is minimized
+            self.root.withdraw()
+        except Exception:
+            pass
+
+    def _on_root_map(self, event=None):
+        """Handle when the hidden root window is restored (taskbar icon clicked)."""
+        try:
+            # Show and raise the visible window when the root is restored
+            self.root.deiconify()
+            self.root.lift()
+            self.root.focus_force()
+            # Re-enable borderless chrome after restoration
             if getattr(self, "_borderless_enabled", False):
                 try:
                     # Delay slightly to allow WM to finish mapping
@@ -787,6 +845,77 @@ class StarCitizenKillFeedGUI:
                         self.root.overrideredirect(True)
                     except Exception:
                         pass
+        except Exception:
+            pass
+
+    def _on_root_focus_in(self, event=None):
+        """Handle when the hidden root window gains focus."""
+        try:
+            # Ensure the visible window is shown and focused
+            if not self.root.winfo_viewable():
+                self.root.deiconify()
+            self.root.lift()
+            self.root.focus_force()
+        except Exception:
+            pass
+
+    def _on_root_focus_out(self, event=None):
+        """Handle when the hidden root window loses focus."""
+        try:
+            # Optional: could hide window when losing focus, but usually not desired
+            pass
+        except Exception:
+            pass
+
+    def _sync_window_state(self):
+        """Synchronize the visible window state with the hidden root window state."""
+        try:
+            if not getattr(self, "_tk_root", None):
+                return
+            
+            # Check if the root window is visible/mapped
+            try:
+                root_state = self._tk_root.state()
+                if root_state == "normal" or root_state == "zoomed":
+                    # Root is visible, ensure our window is too
+                    if not self.root.winfo_viewable():
+                        self.root.deiconify()
+                        self.root.lift()
+                elif root_state == "iconic":
+                    # Root is minimized, hide our window
+                    if self.root.winfo_viewable():
+                        self.root.withdraw()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _schedule_state_sync(self):
+        """Schedule periodic state synchronization for Windows hidden root setup."""
+        try:
+            self._sync_window_state()
+            # Schedule the next sync in 100ms
+            self.root.after(100, self._schedule_state_sync)
+        except Exception:
+            pass
+
+    def _on_taskbar_click(self):
+        """Handle taskbar icon clicks for more reliable window state management."""
+        try:
+            if not getattr(self, "_tk_root", None):
+                return
+            
+            # Check current state and toggle accordingly
+            try:
+                root_state = self._tk_root.state()
+                if root_state == "iconic":
+                    # Window is minimized, restore it
+                    self._tk_root.deiconify()
+                else:
+                    # Window is visible, minimize it
+                    self._tk_root.iconify()
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -1087,6 +1216,13 @@ class StarCitizenKillFeedGUI:
                 event = f"{kill['killer']} killed {kill['victim']} ({kill['weapon']})"
 
             self.recent_tree.insert("", "end", values=(time_str, event))
+        
+        # Update overlay if it exists and is visible
+        try:
+            if self.overlay and self.overlay.is_visible:
+                self.overlay.update_stats()
+        except Exception:
+            logger.debug("Failed to update overlay stats", exc_info=True)
 
     def debounced_update_statistics(self):
         """Debounced statistics update to prevent excessive UI updates with thread safety"""
@@ -1160,6 +1296,169 @@ class StarCitizenKillFeedGUI:
         }
         self.update_statistics_display()
         self.status_var.set("Kill feed cleared")
+    
+    def _init_overlay(self):
+        """Initialize the kill tracker overlay."""
+        try:
+            # Ensure overlay section exists in config
+            if "overlay" not in self.config:
+                self.config["overlay"] = {}
+            
+            # Load overlay config
+            overlay_enabled = self.config["overlay"].get("enabled", "false").lower() == "true"
+            overlay_theme = self.config["overlay"].get("theme", "dark")
+            
+            # Get opacity from config
+            try:
+                overlay_opacity = float(self.config["overlay"].get("opacity", "0.92"))
+                overlay_opacity = max(0.3, min(1.0, overlay_opacity))
+            except (ValueError, TypeError):
+                overlay_opacity = 0.92
+            
+            # Get position from config or use default
+            try:
+                pos_x = int(self.config["overlay"].get("position_x", "0"))
+                pos_y = int(self.config["overlay"].get("position_y", "0"))
+                if pos_x == 0 and pos_y == 0:
+                    # Use default position (top-right)
+                    try:
+                        screen_width = self.root.winfo_screenwidth()
+                        pos_x = screen_width - 200
+                        pos_y = 50
+                    except Exception:
+                        pos_x, pos_y = 50, 50
+                position = (pos_x, pos_y)
+            except (ValueError, TypeError):
+                try:
+                    screen_width = self.root.winfo_screenwidth()
+                    position = (screen_width - 200, 50)
+                except Exception:
+                    position = (50, 50)
+            
+            # Load enabled stats from config
+            try:
+                from lib.overlay_helpers import KillTrackerOverlay
+                overlay_stats_config = self.config["overlay"].get("enabled_stats", "")
+                if overlay_stats_config:
+                    enabled_stats_list = [s.strip() for s in overlay_stats_config.split(",")]
+                    enabled_stats = {
+                        stat: stat in enabled_stats_list 
+                        for stat in KillTrackerOverlay.AVAILABLE_STATS.keys()
+                    }
+                else:
+                    # Default: kills, deaths, kd, streak
+                    enabled_stats = {
+                        "kills": True,
+                        "deaths": True,
+                        "kd": True,
+                        "streak": True,
+                        "max_kill_streak": False,
+                        "max_death_streak": False,
+                    }
+            except Exception:
+                enabled_stats = None
+            
+            # Create overlay
+            self.overlay = create_overlay(
+                self, 
+                theme=overlay_theme, 
+                position=position,
+                enabled_stats=enabled_stats
+            )
+            
+            # Set opacity from config (applies the configured opacity even if it's the default)
+            self.overlay.set_opacity(overlay_opacity)
+            
+            # Set lock state from config
+            try:
+                overlay_locked = self.config["overlay"].get("locked", "false").lower() == "true"
+                self.overlay.set_locked(overlay_locked)
+            except Exception:
+                pass
+            
+            # Show if enabled
+            if overlay_enabled:
+                self.overlay.show()
+                # Start overlay update loop
+                self._start_overlay_updates()
+                
+        except Exception as e:
+            logger.debug(f"Error initializing overlay: {e}", exc_info=True)
+            self.overlay = None
+    
+    def _start_overlay_updates(self):
+        """Start periodic overlay updates."""
+        try:
+            if self.overlay and self.overlay.is_visible:
+                self.overlay.update_stats()
+            # Schedule next update (update every 500ms for smooth updates)
+            if self._overlay_update_job:
+                try:
+                    if hasattr(self.root, "after_cancel"):
+                        self.root.after_cancel(self._overlay_update_job)
+                except Exception:
+                    pass
+            self._overlay_update_job = self.safe_after(500, self._start_overlay_updates)
+        except Exception:
+            logger.debug("Error in overlay update loop", exc_info=True)
+    
+    def toggle_overlay(self):
+        """Toggle overlay visibility."""
+        try:
+            if not self.overlay:
+                self._init_overlay()
+            
+            if self.overlay:
+                self.overlay.toggle()
+                
+                # Update config
+                self.config.setdefault("overlay", {})
+                self.config["overlay"]["enabled"] = "true" if self.overlay.is_visible else "false"
+                save_config(self.config, self.config_path)
+                
+                # Start/stop update loop
+                if self.overlay.is_visible:
+                    self._start_overlay_updates()
+                else:
+                    if self._overlay_update_job:
+                        try:
+                            if hasattr(self.root, "after_cancel"):
+                                self.root.after_cancel(self._overlay_update_job)
+                        except Exception:
+                            pass
+                        self._overlay_update_job = None
+        except Exception as e:
+            logger.debug(f"Error toggling overlay: {e}", exc_info=True)
+    
+    def change_overlay_theme(self, theme_name: str):
+        """Change overlay theme."""
+        try:
+            if not self.overlay:
+                self._init_overlay()
+            
+            if self.overlay:
+                self.overlay.change_theme(theme_name)
+                self.config.setdefault("overlay", {})
+                self.config["overlay"]["theme"] = theme_name
+                save_config(self.config, self.config_path)
+        except Exception as e:
+            logger.debug(f"Error changing overlay theme: {e}", exc_info=True)
+    
+    def change_overlay_opacity(self, opacity: float):
+        """Change overlay opacity."""
+        try:
+            if not self.overlay:
+                self._init_overlay()
+            
+            if self.overlay:
+                # Clamp opacity between 0.3 and 1.0
+                opacity = max(0.3, min(1.0, float(opacity)))
+                self.overlay.set_opacity(opacity)
+                self.config.setdefault("overlay", {})
+                self.config["overlay"]["opacity"] = str(opacity)
+                save_config(self.config, self.config_path)
+        except Exception as e:
+            logger.debug(f"Error changing overlay opacity: {e}", exc_info=True)
 
     def export_data(self):
         """Export kill data to file"""
